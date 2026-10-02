@@ -27,6 +27,7 @@ from .ranges import (
 )
 from .version import (
     PRERELEASE_EXAMPLE_CHAIN,
+    PartialVersion,
     InvalidVersion,
     Version,
     compare,
@@ -42,6 +43,7 @@ __all__ = [
     "InvalidRange",
     "InvalidVersion",
     "PRERELEASE_EXAMPLE_CHAIN",
+    "PartialVersion",
     "Range",
     "Version",
     "__version__",

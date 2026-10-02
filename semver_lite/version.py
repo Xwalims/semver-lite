@@ -363,15 +363,28 @@ class PartialVersion:
             raise _fail("*", "the bare wildcard has no concrete value")
         return Version(self.major, self.minor or 0, self.patch or 0)
 
-    def to_str(self) -> str:
-        """Render the partial version, using ``x`` for each omitted component."""
+    def to_str(self, wildcard: bool = False) -> str:
+        """Render the partial version.
+
+        Args:
+            wildcard: when ``True``, an omitted component is written as ``x``,
+                so ``1`` renders as ``1.x``; otherwise omitted trailing
+                components are dropped entirely and ``1`` renders as ``1``.
+
+        Returns:
+            The rendered partial version.
+        """
         if self.major is None:
             return "*"
         text = str(self.major)
         if self.minor is not None:
             text += f".{self.minor}"
+        elif wildcard:
+            text += ".x"
         if self.patch is not None:
             text += f".{self.patch}"
+        elif wildcard and self.minor is not None:
+            text += ".x"
         return text
 
 

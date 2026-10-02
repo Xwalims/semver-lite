@@ -2,7 +2,7 @@
 
 import unittest
 
-from semver_lite import InvalidVersion, Version, parse
+from semver_lite import InvalidVersion, PartialVersion, Version, parse, parse_partial
 
 
 class TestValidVersions(unittest.TestCase):
@@ -147,6 +147,40 @@ class TestNonStrictMode(unittest.TestCase):
 
     def test_non_strict_mode_still_rejects_leading_zeroes(self) -> None:
         self.assertRaises(InvalidVersion, parse, "01.2.3", strict=False)
+
+
+class TestPartialVersions(unittest.TestCase):
+    """Partial versions back range endpoints and may omit trailing components."""
+
+    def test_parses_each_partial_shape(self) -> None:
+        self.assertEqual(parse_partial("1"), PartialVersion(1, None, None))
+        self.assertEqual(parse_partial("1.2"), PartialVersion(1, 2, None))
+        self.assertEqual(parse_partial("1.2.3"), PartialVersion(1, 2, 3))
+        self.assertEqual(parse_partial("1.x"), PartialVersion(1, None, None))
+        self.assertEqual(parse_partial("1.2.x"), PartialVersion(1, 2, None))
+
+    def test_bare_wildcards_have_no_major(self) -> None:
+        self.assertIsNone(parse_partial("x").major)
+        self.assertIsNone(parse_partial("*").major)
+        self.assertIsNone(parse_partial("X").major)
+
+    def test_to_str_can_render_as_a_wildcard(self) -> None:
+        self.assertEqual(parse_partial("1").to_str(), "1")
+        self.assertEqual(parse_partial("1").to_str(wildcard=True), "1.x")
+        self.assertEqual(parse_partial("1.2").to_str(wildcard=True), "1.2.x")
+        self.assertEqual(parse_partial("1.2.3").to_str(wildcard=True), "1.2.3")
+
+    def test_fill_defaults_missing_components_to_zero(self) -> None:
+        self.assertEqual(parse_partial("1").fill(), parse("1.0.0"))
+        self.assertEqual(parse_partial("1.2").fill(), parse("1.2.0"))
+
+    def test_wildcard_has_no_concrete_value(self) -> None:
+        self.assertRaises(InvalidVersion, parse_partial("x").fill)
+
+    def test_rejects_invalid_partial_components(self) -> None:
+        for raw in ("01.2", "one.two", "1.x.3", "1.2.3.4"):
+            with self.subTest(raw=raw):
+                self.assertRaises(InvalidVersion, parse_partial, raw)
 
 
 class TestHashability(unittest.TestCase):

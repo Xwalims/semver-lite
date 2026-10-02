@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semver-lite"
+version = "0.1.0"
+description = "Strict Semantic Versioning 2.0.0 parsing, comparison, sorting and range matching, with no dependencies."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "__GITHUB_HANDLE__" }]
+keywords = ["semver", "semantic-versioning", "version", "range", "comparator"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Version Control",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.scripts]
+semver-lite = "semver_lite.cli:run"
+
+[tool.setuptools]
+packages = ["semver_lite"]
+
+[tool.setuptools.package-data]
+semver_lite = ["py.typed"]
