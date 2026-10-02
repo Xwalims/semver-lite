@@ -2,6 +2,33 @@
 
 A strict implementation of [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) in pure Python, with no dependencies. It parses and compares versions, sorts them, and tests them against version ranges using the same syntax as npm and Cargo.
 
+<!-- hero -->
+
+[![CI](https://github.com/semver-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/semver-lite/actions/workflows/ci.yml)
+![python 3.11 – 3.13](https://img.shields.io/badge/python-3.11–3.13-blue)
+![MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![dependencies](https://img.shields.io/badge/dependencies-none-2f6f4f)
+
+## Contents
+
+- [What it is](#what-it-is)
+- [Spec conformance](#spec-conformance)
+- [Install](#install)
+- [Usage](#usage)
+  - [Command line](#command-line)
+  - [Exit codes](#exit-codes)
+- [Supported range syntax](#supported-range-syntax)
+  - [The pre-release rule](#the-pre-release-rule)
+- [Library API](#library-api)
+  - [Parsing](#parsing)
+  - [Comparing](#comparing)
+  - [Ranges](#ranges)
+  - [Exceptions](#exceptions)
+- [Running the tests](#running-the-tests)
+- [License](#license)
+
+<!-- /hero -->
+
 ## What it is
 
 - **Strict by default.** Only versions allowed by the spec's Backus-Naur form parse. A `v` prefix, an `=` prefix, surrounding whitespace, a leading zero in any core component, and a leading zero in any numeric pre-release identifier are all rejected.
