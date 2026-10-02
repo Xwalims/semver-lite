@@ -21,8 +21,6 @@ A strict implementation of [Semantic Versioning 2.0.0](https://semver.org/spec/v
   - [The pre-release rule](#the-pre-release-rule)
 - [Library API](#library-api)
   - [Parsing](#parsing)
-  - [Comparing](#comparing)
-  - [Ranges](#ranges)
   - [Exceptions](#exceptions)
 - [Running the tests](#running-the-tests)
 - [License](#license)
