@@ -9,7 +9,7 @@ description = "Strict Semantic Versioning 2.0.0 parsing, comparison, sorting and
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "__GITHUB_HANDLE__" }]
+authors = [{ name = "xwellames" }]
 keywords = ["semver", "semantic-versioning", "version", "range", "comparator"]
 classifiers = [
     "Development Status :: 4 - Beta",
