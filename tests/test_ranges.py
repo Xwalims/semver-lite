@@ -202,6 +202,112 @@ class TestConjunctionAndDisjunction(unittest.TestCase):
         self.assertTrue(satisfies("1.5.0", "  >=1.0.0   <2.0.0  "))
         self.assertTrue(satisfies("3.5.0", ">=1.0.0 <2.0.0 || >=3.0.0 <4.0.0"))
 
+    def test_wildcard_group_absorbs_the_whole_disjunction(self) -> None:
+        """``* || anything`` is just ``*``.
+
+        node-semver collapses the entire range when any ``||`` group is a bare
+        wildcard, so the other groups are redundant rather than additive. This
+        is the wildcard absorbing them, not the wildcard being discarded: the
+        sibling case, ``1.2.3 || *``, is the same range written backwards.
+        """
+        for expression in ("* || 1.2.3", "1.2.3 || *", "* || ^2.0.0", "^2.0.0 || *",
+                           "1.2.3 || 1.2.4 || *", "* || *", "x || 1.2.3", "1.2.3 || x",
+                           ">=0.0.0 || 1.2.3", "1.2.3 || >=0.0.0",
+                           "* || >=1.0.0 <2.0.0", "1.2.3 || * || 5.0.0"):
+            with self.subTest(expression=expression):
+                # A wildcard matches every release version, whichever version
+                # the sibling groups happen to name.
+                for version in ("0.0.1", "1.2.3", "1.5.0", "2.0.0", "3.0.0", "5.0.0"):
+                    self.assertTrue(satisfies(version, expression))
+                # It still admits no pre-release, exactly like a bare "*".
+                self.assertFalse(satisfies("1.0.0-alpha", expression))
+                self.assertFalse(satisfies("1.2.3-alpha", expression))
+
+    def test_disjunction_without_a_wildcard_group_is_not_absorbed(self) -> None:
+        """The absorption above must not overreach onto ordinary disjunctions.
+
+        ``>=0.0.0`` is itself a wildcard spelling, but only within its own
+        conjunction, so this group keeps the sibling group that follows it:
+        node-semver normalises the whole expression to ``<2.0.0||3.0.0``, not
+        to the wildcard.
+        """
+        expression = ">=0.0.0 <2.0.0 || 3.0.0"
+        self.assertTrue(satisfies("1.5.0", expression))
+        # Nothing may match between the two groups, so absorption -- which
+        # would make every release match -- is still disproved here.
+        self.assertFalse(satisfies("2.5.0", expression))
+        self.assertFalse(satisfies("3.5.0", expression))
+        self.assertTrue(satisfies("3.0.0", expression))
+
+    def test_wildcard_group_absorption_normalises_to_the_wildcard(self) -> None:
+        """The normalised form of an absorbed range is the bare wildcard."""
+        self.assertEqual(str(parse_range("* || 1.2.3")), "")
+        self.assertEqual(str(parse_range("1.2.3 || *")), "")
+        self.assertFalse(parse_range("* || 1.2.3"))
+
+    def test_null_set_group_is_dropped_rather_than_absorbed(self) -> None:
+        """``<x`` matches nothing, so it must not widen the range to ``*``.
+
+        This is the case that distinguishes the two ways a group can end up
+        contributing no comparators. A bare ``*`` constrains nothing and makes
+        the range unbounded; ``<x`` is unsatisfiable and contributes nothing.
+        Conflating them turns ``<x || 1.2.3`` -- a dead group next to a real
+        one -- into the wildcard, which matches everything.
+        """
+        for expression in ("<x", ">x", "<x || 1.2.3", ">x || 1.2.3", "1.2.3 || <x",
+                           "<x || >x || 1.2.3"):
+            with self.subTest(expression=expression):
+                if expression in ("<x", ">x"):
+                    # A lone null set still constrains something -- to nothing --
+                    # so it is truthy, unlike the wildcard which constrains
+                    # nothing at all. What matters is that it matches no version.
+                    self.assertTrue(parse_range(expression))
+                    self.assertFalse(satisfies("0.0.0", expression))
+                    self.assertFalse(satisfies("1.2.3", expression))
+                    continue
+                self.assertTrue(satisfies("1.2.3", expression))
+                self.assertFalse(satisfies("1.2.4", expression))
+                self.assertFalse(satisfies("0.0.0", expression))
+
+    def test_exclusive_comparators_against_the_wildcard_are_the_null_set(self) -> None:
+        """``<x`` and ``>x`` are empty; the inclusive spellings are not."""
+        # Nothing sorts below or above the whole space.
+        for expression in ("<x", ">x", "<0.0.0-0"):
+            with self.subTest(expression=expression):
+                self.assertFalse(satisfies("0.0.0", expression))
+                self.assertFalse(satisfies("9.9.9", expression))
+        # >=x and <=x include the entire space, so they are the wildcard.
+        for expression in (">=x", "<=x", "=x", "^x", "~x"):
+            with self.subTest(expression=expression):
+                self.assertTrue(satisfies("0.0.0", expression))
+                self.assertTrue(satisfies("9.9.9", expression))
+                self.assertFalse(satisfies("1.0.0-alpha", expression))
+
+    def test_multi_component_wildcard_endpoints(self) -> None:
+        """Every component of an endpoint may be a wildcard, or none may be.
+
+        ``x.x`` and ``1.x.x`` are accepted, so a repeated wildcard is not a
+        parse error. But ``x.1.x`` is rejected: a number after a wildcard has
+        no single reading, and guessing would silently change the endpoint.
+        """
+        for expression in ("x.x", "X.X", "*.*", "x.*", "*.x"):
+            with self.subTest(expression=expression):
+                # Every component wild means the whole space, so it is the bare
+                # wildcard and normalises to the empty range.
+                self.assertEqual(str(parse_range(expression)), "")
+                self.assertTrue(satisfies("9.9.9", expression))
+        # A wildcard in a later position names the same line as a bare partial
+        # version, since the components after it add nothing.
+        self.assertEqual(str(parse_range("1.x.x")), str(parse_range("1.x")))
+        self.assertTrue(satisfies("1.2.3", "1.x.x"))
+        self.assertFalse(satisfies("2.0.0", "1.x.x"))
+        # A wildcard group still absorbs its siblings.
+        self.assertTrue(satisfies("9.9.9", "x.x || 1.2.3"))
+        # A number after a wildcard has no single reading, so it is rejected.
+        for expression in ("x.1.x", "x.x.1"):
+            with self.subTest(expression=expression), self.assertRaises(InvalidRange):
+                parse_range(expression)
+
 
 class TestPrereleaseRule(unittest.TestCase):
     """npm/Cargo semantics: a pre-release needs a comparator pinning its own line."""

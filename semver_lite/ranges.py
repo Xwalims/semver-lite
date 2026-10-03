@@ -55,6 +55,14 @@ _WILDCARDS = frozenset({"x", "X", "*"})
 # Splits a range endpoint into its numeric core and any "-pre"/"+build" suffix.
 _ENDPOINT_RE = re.compile(r"^(?P<core>\d+(?:\.\d+)*)(?P<rest>[-+].*)?$")
 
+# The lowest version in existence. `<0.0.0-0` can never be satisfied, so a
+# comparator built from it is node-semver's "null set": it matches nothing and
+# is dropped from the range rather than widening it. A bare wildcard group is
+# the opposite -- it constrains nothing at all, which makes the whole range
+# unbounded. The two must not be confused: `<x` is the null set, `*` is the
+# wildcard.
+_NULL_SET = Version(0, 0, 0, ("0",))
+
 
 class InvalidRange(ValueError):
     """Raised when a range expression cannot be parsed.
@@ -138,6 +146,17 @@ class Comparator:
     def __str__(self) -> str:
         """Render the comparator, omitting a redundant ``==``."""
         return f"{'' if self.operator == '==' else self.operator}{self.version.to_str()}"
+
+    @property
+    def is_null_set(self) -> bool:
+        """Return ``True`` when this comparator can never match any version.
+
+        ``<0.0.0-0`` has no lower bound to sit above, since ``0.0.0-0`` is the
+        lowest version there is. node-semver treats such a comparator as the
+        null set and discards it, so ``<x || 1.2.3`` narrows to ``1.2.3``
+        instead of collapsing to the wildcard that a bare ``*`` group means.
+        """
+        return self.operator == "<" and self.version == _NULL_SET
 
 
 @dataclass(frozen=True)
@@ -292,6 +311,13 @@ def _expand_bare(text: str, raw: str, operator: str = "=") -> Tuple[Comparator, 
     """
     endpoint = _split_endpoint(text, raw)
     if endpoint.is_wildcard:
+        # A wildcard endpoint names every version at all, so the operator
+        # decides whether that is everything or nothing. Nothing sits below
+        # the lowest version nor above the highest, so "<x" and ">x" are both
+        # the null set -- distinct from a bare "*", which is every version.
+        # ">=x" and "<=x" include the whole space and stay the wildcard.
+        if operator in ("<", ">"):
+            return (Comparator("<", _NULL_SET),)
         return ()
     if endpoint.suffix or endpoint.partial.patch is not None:
         return (Comparator(operator, endpoint.suffixed() if endpoint.suffix else endpoint.exact()),)
@@ -473,15 +499,35 @@ def parse_range(text: Union[str, Range]) -> Range:
     if not stripped:
         return Range(())
     sets: List[ComparatorSet] = []
+    unconstrained = False
+    null_only = False
     for group in stripped.split("||"):
         cleaned = group.strip()
         if not cleaned:
             continue
         comparator_set = _parse_comparator_set(cleaned, stripped)
-        # A group that constrains nothing (a lone "*") would otherwise admit
-        # every pre-release, so it is dropped rather than kept as an empty set.
-        if comparator_set.comparators:
-            sets.append(comparator_set)
+        # A group that constrains nothing (a lone "*") is remembered rather
+        # than kept: as an empty set it would admit every pre-release, and on
+        # its own it cannot describe the rest of the range.
+        if not comparator_set.comparators:
+            unconstrained = True
+            continue
+        # A group whose comparators can never match is the null set, and is
+        # dropped outright: "<x || 1.2.3" narrows to "1.2.3". This is checked
+        # after the empty case because "<x" also leaves the group empty.
+        if all(comparator.is_null_set for comparator in comparator_set.comparators):
+            null_only = True
+            continue
+        sets.append(comparator_set)
+    if unconstrained:
+        # A group that pins nothing makes the whole range unbounded, so every
+        # sibling group is redundant: "* || 1.2.3" is just "*".
+        return Range(())
+    if not sets and null_only:
+        # Every group was the null set, so nothing can match. This is a real
+        # range holding one dead comparator, not the wildcard, which is why it
+        # cannot be expressed as a range with no sets.
+        return Range((ComparatorSet((Comparator("<", _NULL_SET),)),))
     return Range(tuple(sets))
 
 

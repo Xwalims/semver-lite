@@ -51,7 +51,14 @@ A strict implementation of [Semantic Versioning 2.0.0](https://semver.org/spec/v
 | More identifiers outrank fewer | `1.0.0-alpha < 1.0.0-alpha.1` |
 | Build metadata ignored in precedence | `1.0.0+a == 1.0.0+b` |
 
-The spec does not define range syntax. This library follows the node-semver and Cargo conventions for ranges, and the behaviour was verified against node-semver 7 over a matrix of 51 range expressions against 40 versions, with full agreement.
+The spec does not define range syntax. This library follows the node-semver and Cargo conventions for ranges, and the behaviour was verified against node-semver 7 over a matrix of 98 range expressions against 42 versions — 4116 cases, of which the 252 using syntax node-semver rejects are excluded — with full agreement on every remaining case.
+
+Two range details are worth stating explicitly, because both are easy to get backwards:
+
+- **A wildcard group swallows the whole range.** In `* || 1.2.3`, the `*` makes every other group redundant, so the expression is just `*`. The same applies to `1.2.3 || *`, and to every other spelling of an unbounded group (`x`, `>=0.0.0`, `^x`).
+- **A group that matches nothing is dropped, not absorbed.** `<x` and `>x` are unsatisfiable, since no version sorts below or above the whole space, so `<x || 1.2.3` narrows to `1.2.3`. They are the opposite of `*`, which constrains nothing rather than admitting nothing.
+
+In a partial version every component may be a wildcard, or none may be: `x.x` and `1.x.x` are accepted and name the same thing as `x` and `1.x`, while `x.1.x` is rejected, because a number after a wildcard has no single reading.
 
 ## Install
 

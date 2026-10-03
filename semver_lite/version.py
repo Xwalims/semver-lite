@@ -39,6 +39,9 @@ _IDENTIFIER_CHARS = r"[0-9A-Za-z-]"
 _NUMERIC_RE = re.compile(rf"^(?:{_NUMERIC})$")
 _ALNUM_RE = re.compile(rf"^(?:{_ALNUM})$")
 _IDENTIFIER_CHARS_RE = re.compile(rf"^(?:{_IDENTIFIER_CHARS})$")
+# A component of a partial version that names "any value here". Kept here
+# rather than in ranges.py because PartialVersion.parse is what decides it.
+_WILDCARD_COMPONENTS = frozenset({"x", "*"})
 # <pre-release identifier> ::= <alphanumeric identifier> | <numeric identifier>
 _PRE_IDENTIFIER = rf"(?:{_ALNUM}|{_NUMERIC})"
 
@@ -323,35 +326,40 @@ class PartialVersion:
     def parse(cls, text: str) -> "PartialVersion":
         """Parse ``1.2.3``, ``1.2``, ``1``, ``1.2.x``, ``1.x`` or the bare wildcard ``x``.
 
+        Every component may be a wildcard, and trailing ones may be dropped:
+        ``1.x``, ``1.x.x`` and ``1`` all name the same line. A wildcard cannot
+        be followed by a number, though, so ``x.1.x`` is rejected rather than
+        quietly read as a wildcard -- otherwise the ``x`` would swallow the
+        components after it and change what the endpoint means.
+
         Raises:
             InvalidVersion: if a component that is present is not a valid numeric identifier.
         """
         core = text.strip()
         if core[:1] in ("v", "V", "="):
             core = core[1:]
-        lowered = core.lower()
-        if lowered in ("x", "*"):
-            return cls(None, None, None)
-        if lowered.endswith(".x"):
-            head = lowered[:-2]
-            match = _PARTIAL_RE.match(head)
-            if match is None:
+        components = core.split(".")
+        wildcard_at = None
+        for index, component in enumerate(components):
+            if component.lower() in _WILDCARD_COMPONENTS:
+                if wildcard_at is None:
+                    wildcard_at = index
+                continue
+            if wildcard_at is not None:
+                # A number after a wildcard: the endpoint is ambiguous, not a
+                # wildcard, so it is an error instead of a guess.
                 raise _fail(text, "range endpoints may omit trailing components or use 'x'")
-            minor = match.group("minor")
-            return cls(
-                int(match.group("major")),
-                None if minor is None else int(minor),
-                None,
-            )
-        match = _PARTIAL_RE.match(core)
-        if match is None:
+            if _PARTIAL_RE.match(component) is None:
+                raise _fail(text, "range endpoints may omit trailing components or use 'x'")
+        if wildcard_at == 0:
+            # Every remaining component is also a wildcard, so this names the
+            # whole space: "x", "x.x" and "*.*" are all the bare wildcard.
+            return cls(None, None, None)
+        numbers = [int(component) for component in components[:wildcard_at or len(components)]]
+        if len(numbers) > 3:
             raise _fail(text, "range endpoints may omit trailing components or use 'x'")
-        minor, patch = match.group("minor"), match.group("patch")
-        return cls(
-            int(match.group("major")),
-            None if minor is None else int(minor),
-            None if patch is None else int(patch),
-        )
+        major, minor, patch = (numbers + [None, None, None])[:3]
+        return cls(major, minor, patch)
 
     def fill(self) -> "Version":
         """Return this partial version as a full :class:`Version`, defaulting to zero.
