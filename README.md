@@ -4,7 +4,7 @@ A strict implementation of [Semantic Versioning 2.0.0](https://semver.org/spec/v
 
 <!-- hero -->
 
-[![CI](https://github.com/semver-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/semver-lite/actions/workflows/ci.yml)
+[![CI](https://github.com/Xwalims/semver-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/Xwalims/semver-lite/actions/workflows/ci.yml)
 ![python 3.11 – 3.13](https://img.shields.io/badge/python-3.11–3.13-blue)
 ![MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![dependencies](https://img.shields.io/badge/dependencies-none-2f6f4f)
@@ -55,8 +55,13 @@ The spec does not define range syntax. This library follows the node-semver and 
 
 ## Install
 
+This package is **not published to PyPI** — the name is unregistered, so
+`pip install semver-lite` fails. Install it from a checkout instead:
+
 ```console
-$ pip install semver-lite
+$ git clone https://github.com/Xwalims/semver-lite.git
+$ cd semver-lite
+$ python3 -m pip install .
 ```
 
 To work on a checkout instead, run it straight from the project root with `python3 -m semver_lite.cli`; no installation is needed for that.
