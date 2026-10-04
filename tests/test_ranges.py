@@ -202,6 +202,104 @@ class TestConjunctionAndDisjunction(unittest.TestCase):
         self.assertTrue(satisfies("1.5.0", "  >=1.0.0   <2.0.0  "))
         self.assertTrue(satisfies("3.5.0", ">=1.0.0 <2.0.0 || >=3.0.0 <4.0.0"))
 
+    def test_whitespace_between_operator_and_version_is_ignored(self) -> None:
+        """``>= 1.2.3`` means ``>=1.2.3``.
+
+        node-semver trims whitespace between an operator and the version it
+        modifies before splitting the range into comparators, so the split
+        never sees a bare ``>=``. Splitting first here left that bare operator
+        as its own token, which then failed with "no version after its
+        operator" -- an error on a range npm resolves happily.
+        """
+        for operator, expected in ((">=", ">=1.2.3"), ("<=", "<=1.2.3"), ("<", "<1.2.3"),
+                                   (">", ">1.2.3"), ("=", "=1.2.3")):
+            for spacing in (" ", "  ", "   "):
+                with self.subTest(operator=operator, spacing=spacing):
+                    expression = f"{operator}{spacing}1.2.3"
+                    self.assertEqual(str(parse_range(expression)), expected)
+        # Both spellings of the pessimistic operator, and both prefix forms.
+        for expression, expected in (("~ 1.2.3", ">=1.2.3 <1.3.0-0"),
+                                     ("~> 1.2.3", ">=1.2.3 <1.3.0-0"),
+                                     ("^ 1.2.3", ">=1.2.3 <2.0.0-0"),
+                                     (">= 2.0.0-0", ">=2.0.0-0"),
+                                     (">= 1.0.0 < 2.0.0", ">=1.0.0 <2.0.0")):
+            with self.subTest(expression=expression):
+                self.assertEqual(str(parse_range(expression)), expected)
+        # The trimmed form means the same thing, so it selects the same versions.
+        self.assertTrue(satisfies("1.2.3", ">= 1.2.3"))
+        self.assertTrue(satisfies("1.2.3", "~ 1.2.3"))
+        self.assertFalse(satisfies("1.3.0", "~> 1.2.3"))
+
+    def test_hyphen_range_survives_the_operator_trim(self) -> None:
+        """Trimming must not eat a hyphen range's ``low - high`` endpoints.
+
+        The `` - `` between the endpoints is whitespace after no operator, and
+        the endpoints themselves may carry one *and* a space, as in
+        ``>= 1.0.0 - 2.0.0``. The trim removes only the space after the
+        operator; the operator-bearing endpoint is then rejected for carrying an
+        operator at all, which is the hyphen rule below.
+        """
+        self.assertEqual(str(parse_range("1.2.3 - 2.0.0")), ">=1.2.3 <=2.0.0")
+        self.assertTrue(satisfies("1.5.0", "1.2.3 - 2.0.0"))
+        self.assertFalse(satisfies("2.0.1", "1.2.3 - 2.0.0"))
+
+    def test_hyphen_endpoints_may_not_carry_an_operator(self) -> None:
+        """``>=1.0.0 - 2.0.0`` is rejected, not read as ``>=1.0.0 <=2.0.0``.
+
+        node-semver's HYPHENRANGE token allows only a bare endpoint on each
+        side. This library used to strip the operator and expand the endpoint as
+        if it were bare, so a range npm rejects became a real range here --
+        silently, and to something other than what was written.
+        """
+        for expression in (">=1.0.0 - 2.0.0", "1.0.0 - <=2.0.0", "^1.0.0 - 2.0.0",
+                           "~1.0.0 - 2.0.0", "<1.0.0 - 2.0.0", ">1.0.0 - 2.0.0",
+                           "!=1.0.0 - 2.0.0", ">= 1.0.0 - 2.0.0", "1.0.0 - <= 2.0.0"):
+            with self.subTest(expression=expression):
+                with self.assertRaises(InvalidRange):
+                    parse_range(expression)
+        # Bare endpoints, the form node-semver does accept, still work.
+        self.assertEqual(str(parse_range("1.0.0 - 2.0.0")), ">=1.0.0 <=2.0.0")
+        self.assertEqual(str(parse_range("1.0.0 - 2.0.0-beta")), ">=1.0.0 <=2.0.0-beta")
+        self.assertEqual(str(parse_range("1.2.3-alpha - 2.0.0")), ">=1.2.3-alpha <=2.0.0")
+        self.assertEqual(str(parse_range("1.2.3 - 2.3")), ">=1.2.3 <2.4.0-0")
+
+    def test_hyphen_range_must_be_the_whole_group(self) -> None:
+        """``1.2.3 - 2.0.0 >=1.0.0`` is rejected, not merged with ``>=1.0.0``.
+
+        node-semver's HYPHENRANGE token is anchored with ``^`` and ``$``, so the
+        endpoints have to span the entire ``||`` group. This library searched for
+        the shape anywhere in the group and kept whatever tokens were left over,
+        so a range npm refuses was accepted here and its comparators silently
+        attached to the hyphen bounds.
+        """
+        for expression in ("1.2.3 - 2.0.0 >=1.0.0", ">=1.0.0 1.2.3 - 2.0.0",
+                           "1.2.3 - 2.0.0 <3.0.0", "~1.0.0 1.2.3 - 2.0.0",
+                           "1.2.3 - 2.0.0 || >=1.0.0 <3.0.0"):
+            with self.subTest(expression=expression):
+                # The last one is legal: the hyphen group is the *first* one and
+                # spans it entirely, so the comparator group beside it is a
+                # separate "||" group. 2.5.0 is inside >=1.0.0 <3.0.0, and 3.5.0
+                # is outside both groups.
+                if expression == "1.2.3 - 2.0.0 || >=1.0.0 <3.0.0":
+                    self.assertTrue(satisfies("1.5.0", expression))
+                    self.assertTrue(satisfies("2.5.0", expression))
+                    self.assertFalse(satisfies("3.5.0", expression))
+                    self.assertFalse(satisfies("0.5.0", expression))
+                    continue
+                with self.assertRaises(InvalidRange):
+                    parse_range(expression)
+        # A separate group is the supported way to add a lower bound.
+        self.assertEqual(str(parse_range(">=1.0.0 || 1.2.3 - 2.0.0")),
+                         ">=1.0.0 || >=1.2.3 <=2.0.0")
+
+    def test_tilde_gte_is_a_synonym_for_tilde(self) -> None:
+        """``~>`` is node-semver's LONETILDE spelling, so it means ``~``."""
+        for expression in ("~>1.2.3", "~> 1.2.3", "~>1.2", "~>1"):
+            with self.subTest(expression=expression):
+                self.assertEqual(str(parse_range(expression)), str(parse_range("~" + expression[2:])))
+        self.assertTrue(satisfies("1.2.9", "~>1.2.3"))
+        self.assertFalse(satisfies("1.3.0", "~>1.2.3"))
+
     def test_wildcard_group_absorbs_the_whole_disjunction(self) -> None:
         """``* || anything`` is just ``*``.
 
@@ -244,6 +342,43 @@ class TestConjunctionAndDisjunction(unittest.TestCase):
         self.assertEqual(str(parse_range("* || 1.2.3")), "")
         self.assertEqual(str(parse_range("1.2.3 || *")), "")
         self.assertFalse(parse_range("* || 1.2.3"))
+
+    def test_empty_group_is_a_wildcard_not_an_absent_one(self) -> None:
+        """``1.0.0 ||`` is ``*``, not ``=1.0.0``.
+
+        node-semver splits on ``||`` and parses each group, and the empty string
+        parses to a single ANY comparator rather than to nothing. Its filter
+        drops comparator lists that are empty, and this one is not, so the
+        group survives and swallows the disjunction exactly as a bare ``*``
+        would. Dropping it instead narrows the range to the groups that
+        happened to survive, which is the opposite of what was written.
+        """
+        for expression in ("1.0.0 ||", "|| 1.0.0", "1.0.0 || ", " || 1.0.0",
+                           "1.0.0||", "1.0.0 || || 2.0.0", "1.0.0 ||  || 2.0.0",
+                           "1.0.0 || 2.0.0 ||", "|| 1.0.0 ||", "|| 1.0.0 || 2.0.0",
+                           "|| 1.0.0-alpha", "1.0.0-alpha ||", "^1.0.0 ||",
+                           "|| ^1.0.0", "|| || 1.0.0 || ||", "1.0.0 || ||",
+                           "|| 1.0.0 || ||"):
+            with self.subTest(expression=expression):
+                for version in ("0.0.1", "0.3.2", "1.0.0", "2.0.0", "5.0.0", "9.9.9"):
+                    self.assertTrue(satisfies(version, expression))
+                # Being the wildcard, it still admits no pre-release.
+                self.assertFalse(satisfies("1.0.0-alpha", expression))
+                self.assertEqual(str(parse_range(expression)), "")
+
+    def test_empty_group_absorbs_even_beside_a_null_set_group(self) -> None:
+        """A dead group does not stop an empty group from widening the range.
+
+        ``<x || 1.2.3`` drops the dead group and keeps ``1.2.3``, but appending
+        an empty group adds a live ANY comparator, so the whole expression
+        becomes the wildcard.
+        """
+        self.assertEqual(str(parse_range("<x ||")), "")
+        self.assertEqual(str(parse_range("|| <x")), "")
+        self.assertTrue(satisfies("9.9.9", "<x ||"))
+        self.assertTrue(satisfies("9.9.9", "|| <x"))
+        # Without the empty group the null set is still merely dropped.
+        self.assertEqual(str(parse_range("<x || 1.2.3")), "=1.2.3")
 
     def test_null_set_group_is_dropped_rather_than_absorbed(self) -> None:
         """``<x`` matches nothing, so it must not widen the range to ``*``.

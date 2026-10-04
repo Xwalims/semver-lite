@@ -50,7 +50,19 @@ _HYPHEN_RE = re.compile(r"^(?P<low>\S+)\s+-\s+(?P<high>\S+)$")
 # The same shape, but able to sit between other tokens in a conjunction.
 _HYPHEN_GROUP_RE = re.compile(r"(?P<low>\S+)\s+-\s+(?P<high>\S+)")
 _CARET_RE = re.compile(r"^\^(?P<version>.*)$")
-_TILDE_RE = re.compile(r"^~(?P<version>.*)$")
+# node-semver spells the pessimistic operator "LONETILDE", "(?:~>?)", so "~>"
+# is a synonym for "~" there. Both are accepted here for the same reason.
+_TILDE_RE = re.compile(r"^~>?(?P<version>.*)$")
+# node-semver trims whitespace between an operator and its version (its
+# COMPARATORTRIM/TILDETRIM/CARETTRIM passes) before the range is split into
+# comparators, so ">= 1.2.3" means ">=1.2.3". Splitting first would leave a bare
+# ">=" token that cannot be expanded. The longest spellings come first so ">="
+# is never rewritten as ">" plus "=", and the version may only start with a
+# character a version can begin with, which keeps a hyphen range's " - "
+# untouched.
+_OPERATOR_TRIM_RE = re.compile(
+    r"(?P<operator><=|>=|!=|\^|~>|~|<|>|=)(?P<space>\s+)(?P<version>[0-9vVxX*])"
+)
 _WILDCARDS = frozenset({"x", "X", "*"})
 # Splits a range endpoint into its core and any "-pre"/"+build" suffix. The
 # core may contain wildcards, so it is looser than <valid semver>; the rules
@@ -455,7 +467,19 @@ def _expand_hyphen(low: str, high: str, raw: str) -> Tuple[Comparator, ...]:
     Both ends are inclusive: a bare lower endpoint becomes ``>=low`` and a bare
     upper endpoint becomes ``<=high``. A partial upper endpoint is widened to
     the end of its own line, so ``1.2.3 - 2.3`` includes ``2.3.9``.
+
+    Neither endpoint may carry an operator. node-semver's HYPHENRANGE token
+    admits only a bare ``XRANGEPLAIN`` on each side, so ``>=1.0.0 - 2.0.0`` and
+    ``1.0.0 - <=2.0.0`` are both rejected there. Accepting them here read an
+    operator as if it were part of the version and then quietly discarded it,
+    which turned a rejected range into ``>=1.0.0 <=2.0.0`` -- a different range
+    from the one written. Rejecting is the safe direction: the caller has to say
+    what it meant.
     """
+    for endpoint in (low, high):
+        operator, _ = _split_operator(endpoint)
+        if operator != "=":
+            raise _fail(raw, f"'{endpoint}' in a hyphen range must not carry the operator '{operator}'")
     low_operator, low_version = _split_operator(low)
     # "=" would pin the lower bound to a single version, so a bare or "="-marked
     # lower endpoint means "at least this version".
@@ -517,18 +541,25 @@ def _expand_token(token: str, raw: str) -> Tuple[Comparator, ...]:
 def _parse_comparator_set(text: str, raw: str) -> ComparatorSet:
     """Parse one whitespace-separated conjunction into a :class:`ComparatorSet`.
 
-    A hyphen range is written ``low - high`` with spaces around the dash, so it
-    spans three whitespace-separated tokens rather than one. Such groups are
-    scanned from the left for that shape, and only the remaining tokens are
-    split normally; this lets a comparator sit on either endpoint, as in
-    ``>=1.0.0 - 2.0.0``.
+    A hyphen range is written ``low - high`` with spaces around the dash. It is
+    anchored: node-semver's HYPHENRANGE token is ``^...$``, so the endpoints must
+    span the entire group and a hyphen range cannot sit beside a comparator.
+    ``1.2.3 - 2.0.0 >=1.0.0`` is therefore rejected, while ``1.2.3 - 2.0.0`` and
+    ``>=1.0.0`` on their own are fine. Allowing it in the middle once parsed a
+    range npm refuses and attached its comparators anyway.
+
+    Whitespace between an operator and its version is removed first, exactly as
+    node-semver does before its own split, so ``>= 1.2.3`` is one comparator
+    rather than a bare ``>=`` followed by a version.
     """
     comparators: List[Comparator] = []
-    remainder = text
-    match = _HYPHEN_GROUP_RE.search(remainder)
+    remainder = _OPERATOR_TRIM_RE.sub(r"\g<operator>\g<version>", text)
+    match = _HYPHEN_GROUP_RE.match(remainder)
     if match is not None:
+        if match.end() != len(remainder):
+            raise _fail(raw, "a hyphen range must be the whole group, with no comparator beside it")
         comparators.extend(_expand_hyphen(match.group("low"), match.group("high"), raw))
-        remainder = remainder[: match.start()] + " " + remainder[match.end() :]
+        remainder = ""
     for token in remainder.split():
         comparators.extend(_expand_token(token, raw))
     return ComparatorSet(tuple(comparators))
@@ -560,6 +591,13 @@ def parse_range(text: Union[str, Range]) -> Range:
     for group in stripped.split("||"):
         cleaned = group.strip()
         if not cleaned:
+            # An empty group is an unbounded group, not an absent one. node-semver
+            # parses the empty string to a single ANY comparator, so the group
+            # survives its "drop empty comparator lists" filter and swallows the
+            # whole disjunction: "1.0.0 ||" is "*", not "=1.0.0". Skipping it here
+            # silently narrowed the range to whatever siblings survived, which is
+            # the opposite of what the expression says.
+            unconstrained = True
             continue
         comparator_set = _parse_comparator_set(cleaned, stripped)
         # A group that constrains nothing (a lone "*") is remembered rather

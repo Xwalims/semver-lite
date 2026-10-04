@@ -51,12 +51,17 @@ A strict implementation of [Semantic Versioning 2.0.0](https://semver.org/spec/v
 | More identifiers outrank fewer | `1.0.0-alpha < 1.0.0-alpha.1` |
 | Build metadata ignored in precedence | `1.0.0+a == 1.0.0+b` |
 
-The spec does not define range syntax. This library follows the node-semver and Cargo conventions for ranges, and the behaviour was verified against node-semver 7.8.5 over a matrix of 105 range expressions against 41 versions — 4305 cases, of which the 164 using syntax node-semver rejects are excluded — with full agreement on every remaining case.
+The spec does not define range syntax. This library follows the node-semver and Cargo conventions for ranges, and the behaviour was verified against node-semver 7.8.5 over a matrix of 104 range expressions against 90 versions — 9360 cases. 8010 agree. The other 1350 are all the same class: node-semver returns `false` for a range this library rejects outright (a leading zero in a component, a pre-release with nothing to attach to, a bare `latest`, a malformed `~<`). That is the strictness described above, not a disagreement about what a range means — no case remains where one implementation accepts and matches where the other does not.
 
-Two range details are worth stating explicitly, because both are easy to get backwards:
+Three range details are worth stating explicitly, because all three are easy to get backwards:
 
 - **A wildcard group swallows the whole range.** In `* || 1.2.3`, the `*` makes every other group redundant, so the expression is just `*`. The same applies to `1.2.3 || *`, and to every other spelling of an unbounded group (`x`, `>=0.0.0`, `^x`).
-- **A group that matches nothing is dropped, not absorbed.** `<x` and `>x` are unsatisfiable, since no version sorts below or above the whole space, so `<x || 1.2.3` narrows to `1.2.3`. They are the opposite of `*`, which constrains nothing rather than admitting nothing.
+- **An empty group is a wildcard, not a missing one.** `1.0.0 ||` is `*`, not `=1.0.0`. node-semver parses the empty group to a single ANY comparator, which survives the filter that drops empty comparator lists, so it swallows the disjunction the same way `*` does. This one bites in the permissive direction: reading it as a missing group quietly *narrows* a range that was meant to cover everything.
+- **A group that matches nothing is dropped, not absorbed.** `<x` and `>x` are unsatisfiable, since no version sorts below or above the whole space, so `<x || 1.2.3` narrows to `1.2.3`. They are the opposite of `*`, which constrains nothing rather than admitting nothing. A null-set group next to an empty group does not survive it: `<x ||` is still `*`.
+
+Whitespace is never load-bearing. A space between an operator and its version is ignored, so `>= 1.2.3` is `>=1.2.3` and `~ 1.2.3` is `~1.2.3`; node-semver strips it before splitting the range into comparators, and so does this. `~>` is node-semver's spelling of the pessimistic operator, the same `LONETILDE` token as `~`, so it is accepted as a synonym rather than rejected as malformed.
+
+A hyphen range must be the whole group and both endpoints must be bare. `1.2.3 - 2.0.0` is fine, but `>=1.0.0 - 2.0.0`, `1.0.0 - <=2.0.0` and `1.2.3 - 2.0.0 >=1.0.0` are errors: node-semver's `HYPHENRANGE` token is anchored, admitting only a bare version on either side of the dash and nothing beside them. To bound a range from below, put the lower bound in its own `||` group or spell both ends as comparators: `>=1.0.0 || 1.2.3 - 2.0.0` is exactly `>=1.0.0||>=1.2.3 <=2.0.0`.
 
 In a partial version every component may be a wildcard, or none may be: `x.x` and `1.x.x` are accepted and name the same thing as `x` and `1.x`, while `x.1.x` is rejected, because a number after a wildcard has no single reading.
 
@@ -183,7 +188,7 @@ $ echo $?
 | Less than | `<1.2.3` | Below `1.2.3` |
 | Less or equal | `<=1.2.3` | `1.2.3` and below |
 | Caret | `^1.2.3` | `>=1.2.3 <2.0.0-0`; the left-most non-zero component is pinned, so `^0.2.3` is `>=0.2.3 <0.3.0-0` and `^0.0.3` is `>=0.0.3 <0.0.4-0` |
-| Tilde | `~1.2.3` | `>=1.2.3 <1.3.0-0`; with no minor, `~1.2` still stops at `1.3.0-0` |
+| Tilde | `~1.2.3`, `~>1.2.3` | `>=1.2.3 <1.3.0-0`; with no minor, `~1.2` still stops at `1.3.0-0`. `~>` is a synonym |
 | Wildcard | `1.2.x`, `1.x`, `x`, `*` | `1.2.x` is `>=1.2.0 <1.3.0-0`; `1.x` is `>=1.0.0 <2.0.0-0`; `*` matches every release |
 | Partial version | `1.2`, `1` | Same as the matching wildcard: `>=1.2.0 <1.3.0-0` and `>=1.0.0 <2.0.0-0` |
 | Hyphen range | `1.2.3 - 2.0.0` | Inclusive at both ends; a partial upper endpoint widens, so `1.2.3 - 2.3` includes `2.3.9` |

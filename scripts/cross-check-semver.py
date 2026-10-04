@@ -45,6 +45,31 @@ CASES = [
     "1.2.3 - 2.0.0",
     "1.2.3-alpha - 2.0.0",
     "1.2.3 || 2.0.0-alpha",
+    # an empty group is a wildcard group, not a missing one
+    "1.2.3 ||",
+    "|| 1.2.3",
+    "1.2.3 || || 2.0.0",
+    "<x ||",
+    # whitespace between an operator and its version
+    ">= 1.2.3",
+    "<=  1.2.3",
+    "~ 1.2.3",
+    "^ 1.2.3",
+    ">= 1.0.0 < 2.0.0",
+    ">= 1.0.0 - 2.0.0",
+    # node-semver's LONETILDE spelling, the same token as "~"
+    "~>1.2.3",
+    "~> 1.2.3",
+    # a hyphen range is anchored and its endpoints must be bare
+    "1.2.3 - 2.0.0-beta",
+    "1.2.3-alpha - 2.0.0",
+    "1.2.3 - 2.3",
+    ">=1.0.0 - 2.0.0",
+    "1.0.0 - <=2.0.0",
+    "^1.0.0 - 2.0.0",
+    "1.2.3 - 2.0.0 >=1.0.0",
+    ">=1.0.0 1.2.3 - 2.0.0",
+    ">=1.0.0 || 1.2.3 - 2.0.0",
     # a suffix with no patch component to bind to
     "1.2-alpha",
     "1.x-alpha",
