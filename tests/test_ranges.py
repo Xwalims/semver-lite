@@ -349,6 +349,54 @@ class TestPrereleaseRule(unittest.TestCase):
         self.assertTrue(satisfies("1.0.0+build", "^1.0.0"))
         self.assertTrue(satisfies("1.0.0", "^1.0.0+build"))
 
+    def test_build_metadata_on_a_wildcard_endpoint_is_ignored(self) -> None:
+        # node-semver strips build metadata before it expands an x-range, so
+        # "1.2.x+b" is exactly "1.2.x" and "x+b" is exactly "x". Verified
+        # against node-semver 7.8.5: both normalise to the same comparator set.
+        for suffixed, bare in (("1.2.x+b", "1.2.x"), ("1+b", "1"),
+                               ("x+b", "x"), ("*+b", "*"),
+                               ("1.x.x+b", "1.x"), ("1.2.3+b", "1.2.3")):
+            with self.subTest(expression=suffixed):
+                self.assertEqual(str(parse_range(suffixed)), str(parse_range(bare)))
+        self.assertTrue(satisfies("9.9.9", "x+b"))
+        self.assertTrue(satisfies("1.2.4", "1.2.x+b"))
+        self.assertFalse(satisfies("2.0.0", "1.2.x+b"))
+
+    def test_prerelease_on_a_wildcard_patch_is_ignored(self) -> None:
+        # A wildcard patch names a whole line, which has no single pre-release
+        # to pin, so node-semver expands "1.2.x-alpha" to ">=1.2.0 <1.3.0-0".
+        # Confirmed by reading its expansion table, not inferred.
+        for suffixed, bare in (("1.2.x-alpha", "1.2.x"), ("1.x.x-a", "1.x"),
+                               ("0.0.x-alpha", "0.0.x"),
+                               ("^1.2.x-alpha", "^1.2.x"),
+                               ("~1.2.x-alpha", "~1.2.x"),
+                               ("1.2.x-alpha+b", "1.2.x")):
+            with self.subTest(expression=suffixed):
+                self.assertEqual(str(parse_range(suffixed)), str(parse_range(bare)))
+        self.assertTrue(satisfies("1.2.4", "1.2.x-alpha"))
+        self.assertFalse(satisfies("2.0.0", "1.2.x-alpha"))
+        # A wildcard patch still admits no pre-release of its own accord.
+        self.assertFalse(satisfies("1.2.4-alpha", "1.2.x-alpha"))
+
+    def test_prerelease_too_early_on_an_endpoint_is_rejected(self) -> None:
+        # The pre-release needs a patch component to attach to. "1.2.3-alpha"
+        # has one; "1.2-alpha" and "1.x-alpha" do not, so they are invalid
+        # rather than silently read as their bare cores. node-semver 7.8.5
+        # rejects all three of these too.
+        for expression in ("1.2-alpha", "1.x-alpha", "x-alpha", "*-alpha",
+                           "1.2-0", "1.x-a.1"):
+            with self.subTest(expression=expression), self.assertRaises(InvalidRange):
+                parse_range(expression)
+
+    def test_junk_suffixes_are_reported_not_swallowed(self) -> None:
+        # Dropping the suffix must not turn malformed input into a valid
+        # range; each of these is invalid before and after the change.
+        for expression in ("1.2.x-", "1.2.x-a_b", "1.2.x-a!", "1.2.x+",
+                           "1.2.+", "1.2.+b", "1.2.3-", "1.2.3+",
+                           "1.2.4.5-alpha", "1..2-x"):
+            with self.subTest(expression=expression), self.assertRaises(InvalidRange):
+                parse_range(expression)
+
 
 class TestRangeNormalisation(unittest.TestCase):
     """parse_range should expose the same comparator sets satisfies uses."""

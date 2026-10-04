@@ -52,8 +52,14 @@ _HYPHEN_GROUP_RE = re.compile(r"(?P<low>\S+)\s+-\s+(?P<high>\S+)")
 _CARET_RE = re.compile(r"^\^(?P<version>.*)$")
 _TILDE_RE = re.compile(r"^~(?P<version>.*)$")
 _WILDCARDS = frozenset({"x", "X", "*"})
-# Splits a range endpoint into its numeric core and any "-pre"/"+build" suffix.
-_ENDPOINT_RE = re.compile(r"^(?P<core>\d+(?:\.\d+)*)(?P<rest>[-+].*)?$")
+# Splits a range endpoint into its core and any "-pre"/"+build" suffix. The
+# core may contain wildcards, so it is looser than <valid semver>; the rules
+# for the suffix live in _split_endpoint below.
+_ENDPOINT_RE = re.compile(r"^(?P<core>[0-9xX*]+(?:\.[0-9xX*]+)*)(?P<rest>[-+].*)?$")
+_RULE_ENDPOINT_PRE = (
+    "a pre-release suffix needs all three core components, as in '1.2.3-alpha'"
+)
+_RULE_ENDPOINT_COUNT = "an endpoint has at most three core components"
 
 # The lowest version in existence. `<0.0.0-0` can never be satisfied, so a
 # comparator built from it is node-semver's "null set": it matches nothing and
@@ -258,18 +264,68 @@ def _split_operator(text: str) -> Tuple[str, str]:
 
 
 def _split_endpoint(text: str, raw: str) -> _Endpoint:
-    """Split a range endpoint into a partial core and any ``-pre``/``+build`` suffix.
+    """Split a range endpoint into its partial core and any ``-pre``/``+build`` suffix.
+
+    A suffix on a *wildcard* endpoint is accepted and then ignored, because
+    node-semver strips build metadata before it expands an x-range, and a
+    pre-release is only syntactically present once all three core components
+    have been written. So ``1.2.x-alpha``, ``1.2.x+b`` and ``x+b`` all parse and
+    name the same lines as ``1.2.x`` and ``x`` respectively. A pre-release that
+    appears too early is an error instead, because there is no component for it
+    to attach to: ``1.2-alpha`` and ``1.x-alpha`` are rejected.
 
     Raises:
         InvalidRange: if the endpoint is not a usable partial version.
     """
-    match = _ENDPOINT_RE.match(text.strip())
-    try:
-        if match is None:
+    text = text.strip()
+    match = _ENDPOINT_RE.match(text)
+    if match is None:
+        try:
             return _Endpoint(PartialVersion.parse(text), "")
-        return _Endpoint(PartialVersion.parse(match.group("core")), match.group("rest") or "")
+        except InvalidVersion as error:
+            raise _as_range_error(raw, error) from error
+
+    core = match.group("core")
+    rest = match.group("rest") or ""
+    # "1.2.3-alpha+b" keeps its pre-release and drops the build; "+b" alone is
+    # a build suffix, which never affects precedence or matching.
+    build_at = rest.find("+")
+    if build_at != -1:
+        pre, build = rest[:build_at], rest[build_at:]
+    else:
+        pre, build = rest, ""
+    suffix = pre
+
+    components = core.split(".")
+    if len(components) > 3:
+        raise _fail(raw, _RULE_ENDPOINT_COUNT)
+    # A pre-release binds to the patch component, so it needs the patch
+    # component spelled out: "1.2.3-alpha" is a version and "1.2.x-alpha"
+    # parses (the 'x' supplies the component the suffix attaches to), while
+    # "1.2-alpha" and "1.x-alpha" have nowhere to put it and are rejected.
+    if pre and len(components) < 3:
+        raise _fail(raw, _RULE_ENDPOINT_PRE)
+    # Validate both suffixes, even the ones about to be dropped, so that junk
+    # such as "1.2.x-a_b" is reported instead of quietly swallowed.
+    for suffix_to_check in (pre, build):
+        if suffix_to_check:
+            try:
+                parse(f"0.0.0{suffix_to_check}")
+            except InvalidVersion as error:
+                raise _as_range_error(raw, error) from error
+    try:
+        partial = PartialVersion.parse(core)
     except InvalidVersion as error:
         raise _as_range_error(raw, error) from error
+    # Both suffixes are ignored unless the patch is a number. A wildcard or
+    # omitted patch names a whole line of releases, and a line has no single
+    # pre-release to pin: node-semver expands "1.2.x-alpha" to exactly
+    # ">=1.2.0 <1.3.0-0". Build metadata is dropped here too, since it never
+    # affects precedence -- that is the same reason node-semver strips it
+    # before expanding an x-range at all.
+    if partial.patch is None:
+        suffix = ""
+    return _Endpoint(partial, suffix)
 
 
 def _line_cores(partial: PartialVersion) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:

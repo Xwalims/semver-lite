@@ -51,7 +51,7 @@ A strict implementation of [Semantic Versioning 2.0.0](https://semver.org/spec/v
 | More identifiers outrank fewer | `1.0.0-alpha < 1.0.0-alpha.1` |
 | Build metadata ignored in precedence | `1.0.0+a == 1.0.0+b` |
 
-The spec does not define range syntax. This library follows the node-semver and Cargo conventions for ranges, and the behaviour was verified against node-semver 7 over a matrix of 98 range expressions against 42 versions — 4116 cases, of which the 252 using syntax node-semver rejects are excluded — with full agreement on every remaining case.
+The spec does not define range syntax. This library follows the node-semver and Cargo conventions for ranges, and the behaviour was verified against node-semver 7.8.5 over a matrix of 105 range expressions against 41 versions — 4305 cases, of which the 164 using syntax node-semver rejects are excluded — with full agreement on every remaining case.
 
 Two range details are worth stating explicitly, because both are easy to get backwards:
 
@@ -189,6 +189,14 @@ $ echo $?
 | Hyphen range | `1.2.3 - 2.0.0` | Inclusive at both ends; a partial upper endpoint widens, so `1.2.3 - 2.3` includes `2.3.9` |
 | Conjunction | `>=1.2.3 <2.0.0` | Space-separated comparators, all of which must hold |
 | Disjunction | `^1.0.0 \|\| ^2.0.0` | Either group may match |
+
+A `-pre` or `+build` suffix on an endpoint is only kept when the endpoint is a
+full three-component version. On a partial or wildcard endpoint it is dropped,
+because such an endpoint names a whole line of releases and a line has no
+single pre-release to pin: `1.2.x-alpha`, `1.2.x+b` and `x+b` mean exactly
+`1.2.x`, `1.2.x` and `x`. A pre-release that appears before a patch component
+is an error instead, since it has nothing to attach to, so `1.2-alpha` and
+`1.x-alpha` are rejected.
 
 Comparators applied to a partial version act on the whole line that the partial version names: `>=1.2` is `>=1.2.0`, `>1.2` excludes the entire `1.2` line, and `<=1.2` covers that line inclusively.
 
