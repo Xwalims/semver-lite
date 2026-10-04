@@ -30,3 +30,25 @@ jobs:
 
       - name: Run the test suite
         run: python3 -m unittest discover -s tests -t . -v
+
+  # Range parsing is compared against the reference implementation rather than
+  # against this repository's own expectations, which were wrong three times:
+  # about wildcard endpoints, about how many components a pre-release needs, and
+  # about reading node-semver's null range as "accepted" when it means "rejected".
+  #
+  # node-semver is a dev-time check only. It is never imported by the package
+  # and never appears in its dependencies.
+  differential:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the reference implementation
+        run: npm install --no-save --no-package-lock semver@7
+      - name: Compare range parsing with node-semver
+        run: python3 scripts/cross-check-semver.py

@@ -301,6 +301,28 @@ $ python3 -m unittest discover -s tests -t . -v
 
 The full suite runs in about a second. CI runs the same command on Python 3.11, 3.12 and 3.13.
 
+Range parsing is compared against **node-semver**, the reference implementation, rather
+than against this repository's own expectations:
+
+```console
+$ python3 scripts/cross-check-semver.py
+oracle: node-semver at /path/to/node_modules/semver/index.js
+25 range syntax cases compared, 0 mismatch(es)
+
+range parsing agrees with node-semver on every case
+```
+
+node-semver is a dev-time check only: the package never imports it and it never appears in
+its dependencies, and the script exits 0 when no copy is installed.
+
+That harness exists because this repository's own expectations about range syntax were
+wrong three separate times: about which wildcard endpoints accept a suffix, about how many
+components a pre-release needs to bind to, and — most expensively — about reading
+node-semver's *null range* as "accepted" when it quietly means "rejected". That last
+misreading produced nine phantom mismatches, every one of them in the harness and none in
+the parser. A reference implementation settles in one command what an hour of careful
+reading does not.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
