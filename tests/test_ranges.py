@@ -144,6 +144,102 @@ class TestWildcardsAndPartialVersions(unittest.TestCase):
         self.assertTrue(satisfies("1.0.0", ""))
 
 
+class TestOutOfOrderWildcards(unittest.TestCase):
+    """A wildcard followed by a number is rejected everywhere except under ``^``/``~``.
+
+    node-semver's ``XRANGEPLAIN`` token lets each component be a wildcard on its
+    own, so ``x.1.8`` is well-formed *syntax*. The bare form still refuses it:
+    ``replaceXRange`` calls ``invalidXRangeOrder`` and hands the range back
+    untouched rather than guessing. ``^`` and ``~`` are the exception, because
+    ``replaceCaret``/``replaceTilde`` test the major component first and discard
+    the token outright when it is ``x`` -- node-semver's own comment there is
+    "any, kinda silly". A wildcard in a later position contributes nothing for
+    the same reason, so the endpoint means the same thing as if everything from
+    that component down had been left off.
+    """
+
+    # Verified against node-semver's tokenizer and validRange: every one of
+    # these is accepted there, and each expands to the range named beside it.
+    OPERATOR_FORMS = {
+        "^x.1.8": "*", "~x.1.8": "*", "~>x.0": "*", "^x.x.8": "*",
+        "^1.x.8": ">=1.0.0 <2.0.0-0", "~1.x.8": ">=1.0.0 <2.0.0-0",
+        "^0.x.8": "<1.0.0-0", "~0.x.8": "<1.0.0-0",
+    }
+
+    # These stay rejected, with and without an operator, because
+    # invalidXRangeOrder refuses a number after a wildcard.
+    REJECTED = ("x.1.8", "x.1", "x.1.x", "x.x.8", "*.1.8", "X.1.8", "1.x.8",
+                ">=x.1.8", ">x.1.8", "<x.1.8", "<=1.x.8")
+
+    def test_caret_and_tilde_accept_a_wildcard_major(self) -> None:
+        for operator in ("^", "~", "~>"):
+            for core in ("x.1.8", "x.1", "x.x.8", "x.x.x"):
+                with self.subTest(operator=operator, core=core):
+                    self.assertTrue(satisfies("0.0.1", f"{operator}{core}"))
+                    self.assertTrue(satisfies("1.2.3", f"{operator}{core}"))
+                    self.assertTrue(satisfies("99.99.99", f"{operator}{core}"))
+
+    def test_wildcard_after_a_concrete_component_is_dropped(self) -> None:
+        # ^1.x.8 must mean exactly ^1.x, not ^1.8. Note that ^1.x and ~1.x
+        # both span the whole 1.x line (>=1.0.0 <2.0.0-0) once the minor is a
+        # wildcard -- node-semver widens them identically, so 1.3.0 is inside
+        # the range and only 2.0.0 and 0.9.9 fall outside it.
+        for operator in ("^", "~", "~>"):
+            with self.subTest(operator=operator):
+                self.assertTrue(satisfies("1.0.0", f"{operator}1.x.8"))
+                self.assertTrue(satisfies("1.3.0", f"{operator}1.x.8"))
+                self.assertTrue(satisfies("1.9.9", f"{operator}1.x.8"))
+                self.assertFalse(satisfies("2.0.0", f"{operator}1.x.8"))
+                self.assertFalse(satisfies("0.9.9", f"{operator}1.x.8"))
+                # The nearest wrong answer, ^1.8, would pin the patch and so
+                # reject 1.2.9. This is the assertion that catches it.
+                self.assertTrue(satisfies("1.2.9", f"{operator}1.x.8"))
+
+    def test_zero_major_line_is_still_only_a_ceiling(self) -> None:
+        # ^0.x.8 == ^0.x == "<1.0.0-0": the 0.x line constrains only the top.
+        for operator in ("^", "~", "~>"):
+            with self.subTest(operator=operator):
+                self.assertTrue(satisfies("0.0.1", f"{operator}0.x.8"))
+                self.assertTrue(satisfies("0.9.9", f"{operator}0.x.8"))
+                self.assertFalse(satisfies("1.0.0", f"{operator}0.x.8"))
+
+    def test_a_dropped_number_does_not_survive_anywhere(self) -> None:
+        # The regression that motivated this: ^1.x.8 used to be rejected, and
+        # the nearest wrong answer would be ^1.8, which would wrongly pin the
+        # patch. Pin the whole normalised range instead of a single version, so
+        # a wrong ceiling cannot pass by agreeing on the one version we probe.
+        for operator in ("^", "~", "~>"):
+            with self.subTest(operator=operator):
+                self.assertEqual(str(parse_range(f"{operator}1.x.8")),
+                                 str(parse_range(f"{operator}1.x")))
+                self.assertEqual(str(parse_range(f"{operator}0.x.8")),
+                                 str(parse_range(f"{operator}0.x")))
+                self.assertEqual(str(parse_range(f"{operator}x.1.8")),
+                                 str(parse_range(f"{operator}x")))
+
+    def test_out_of_order_wildcards_stay_rejected(self) -> None:
+        for text in self.REJECTED:
+            with self.subTest(range=text):
+                with self.assertRaises(InvalidRange):
+                    parse_range(text)
+
+    def test_not_equal_does_not_extend_to_out_of_order_wildcards(self) -> None:
+        # `!=` is a semver-lite extension, but it expands a bare endpoint, so
+        # it inherits the bare rule rather than the caret/tilde leniency.
+        for text in ("!=x.1.8", "!=1.x.8"):
+            with self.subTest(range=text):
+                with self.assertRaises(InvalidRange):
+                    parse_range(text)
+
+    def test_caret_still_validates_a_dropped_pre_release(self) -> None:
+        # Collapsing the endpoint must not swallow a junk suffix: node-semver
+        # validates it before discarding the token, and so must we.
+        for text in ("^x.1.8-a_b", "~x.1.8-a_b"):
+            with self.subTest(range=text):
+                with self.assertRaises(InvalidRange):
+                    parse_range(text)
+
+
 class TestHyphenRanges(unittest.TestCase):
     """``low - high`` is inclusive at both ends, with partial upper endpoints widened."""
 

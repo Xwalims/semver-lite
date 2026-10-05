@@ -65,6 +65,18 @@ A hyphen range must be the whole group and both endpoints must be bare. `1.2.3 -
 
 In a partial version every component may be a wildcard, or none may be: `x.x` and `1.x.x` are accepted and name the same thing as `x` and `1.x`, while `x.1.x` is rejected, because a number after a wildcard has no single reading.
 
+**`^` and `~` are the exception, and they are lenient.** Under those two operators a wildcard major is accepted even when numbers follow it, and the components after a wildcard are dropped rather than refused:
+
+| Written | Means | Expands to |
+| --- | --- | --- |
+| `^x.1.8`, `~x.1.8` | `^x`, `~x` | `*` |
+| `^1.x.8`, `~1.x.8` | `^1.x`, `~1.x` | `>=1.0.0 <2.0.0-0` |
+| `^0.x.8`, `~0.x.8` | `^0.x`, `~0.x` | `<1.0.0-0` |
+
+The bare form keeps the strict rule, so `x.1.8` and `>=x.1.8` are still rejected. This asymmetry is not a choice: node-semver's `XRANGEPLAIN` token does allow a wildcard in any position, but the bare path runs `invalidXRangeOrder` and hands the range back untouched instead of guessing, while `replaceCaret` and `replaceTilde` test the major component first and discard the whole token when it is `x`. node-semver's own comment on that branch is `// ^ --> * (any, kinda silly)`.
+
+Note that `^1.x` and `~1.x` agree, and both mean the whole `1.x` line (`>=1.0.0 <2.0.0-0`). Once the minor is a wildcard the tilde has no patch-level band left to restrict, so it widens to the same range the caret gives. The dropped `8` in `^1.x.8` contributes nothing: this is `^1.x`, not `^1.8`.
+
 ## Install
 
 This package is **not published to PyPI** — the name is unregistered, so

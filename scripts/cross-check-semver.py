@@ -82,6 +82,39 @@ CASES = [
     "1.2.3-",
     "1.2.3.4-alpha",
     "1.2.3-a_b",
+    # ^ and ~ accept a wildcard major, even one with numbers after it: the
+    # tokenizer's XRANGEPLAIN lets every component be a wildcard independently,
+    # and replaceCaret/replaceTilde discard the token when the major is x. These
+    # were all rejected here until they were found against the reference.
+    "^x.1.8",
+    "^x.1",
+    "~x.1.8",
+    "~x.0",
+    "~>x.0",
+    "^x.x.8",
+    "~>x.2.6-0",
+    "^X.1.0-rc.1",
+    "~X.3.3-beta",
+    # a wildcard below the major contributes nothing, so these mean ^1.x, ^0.x, ^x
+    "^1.x.8",
+    "~1.x.8",
+    "~>1.x.8",
+    "^0.x.8",
+    "~0.x.8",
+    "^1.x.x",
+    "~1.x.x",
+    # the bare form still refuses a number after a wildcard, so it must not
+    # start accepting these by accident
+    "x.1.8",
+    "x.1",
+    "x.1.x",
+    "x.x.8",
+    "1.x.8",
+    "*.1.8",
+    "X.1.8",
+    ">=x.1.8",
+    ">x.1.8",
+    "<x.1.8",
 ]
 
 NODE_PROBE = r"""

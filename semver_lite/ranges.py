@@ -275,7 +275,25 @@ def _split_operator(text: str) -> Tuple[str, str]:
     return "=", text.strip()
 
 
-def _split_endpoint(text: str, raw: str) -> _Endpoint:
+def _cut_at_wildcard(core: str) -> str:
+    """Return ``core`` truncated at its first wildcard component, inclusive.
+
+    ``1.x.8`` becomes ``1.x``, ``x.1.8`` becomes ``x`` and ``*`` becomes the
+    empty string, which the caller reads as the bare wildcard. Components after
+    the wildcard are dropped rather than rejected, which is what node-semver's
+    caret and tilde passes do: they only ever look at the leading component
+    that is still concrete, so a later ``x`` contributes nothing.
+    """
+    kept = []
+    for component in core.split("."):
+        if component.lower() in _WILDCARDS:
+            kept.append(component)
+            break
+        kept.append(component)
+    return ".".join(kept)
+
+
+def _split_endpoint(text: str, raw: str, collapse_wildcards: bool = False) -> _Endpoint:
     """Split a range endpoint into its partial core and any ``-pre``/``+build`` suffix.
 
     A suffix on a *wildcard* endpoint is accepted and then ignored, because
@@ -285,6 +303,22 @@ def _split_endpoint(text: str, raw: str) -> _Endpoint:
     name the same lines as ``1.2.x`` and ``x`` respectively. A pre-release that
     appears too early is an error instead, because there is no component for it
     to attach to: ``1.2-alpha`` and ``1.x-alpha`` are rejected.
+
+    ``collapse_wildcards`` handles the operator forms, where node-semver's
+    grammar is deliberately more permissive than the bare one. Its ``XRANGEPLAIN``
+    token lets every component be a wildcard independently, so ``x.1.8`` is a
+    well-formed endpoint. ``^`` and ``~`` never reject it: ``replaceCaret`` and
+    ``replaceTilde`` both test the major component first and, when it is ``x``,
+    discard the whole token -- node-semver's own comment calls this "any, kinda
+    silly". A wildcard anywhere below the major behaves the same way, so the
+    endpoint means exactly what it would mean with everything from that
+    component down omitted: ``^1.x.8`` is ``^1.x`` and ``^x.1.8`` is ``^x``.
+    That is what this flag does, by cutting the core at its first wildcard.
+
+    The bare form has no such pass and keeps the stricter rule, because
+    ``replaceXRange`` calls ``invalidXRangeOrder`` and leaves an out-of-order
+    range untouched rather than guessing at it. So bare ``x.1.8`` is still
+    rejected, as it is in node-semver.
 
     Raises:
         InvalidRange: if the endpoint is not a usable partial version.
@@ -311,11 +345,19 @@ def _split_endpoint(text: str, raw: str) -> _Endpoint:
     components = core.split(".")
     if len(components) > 3:
         raise _fail(raw, _RULE_ENDPOINT_COUNT)
+
+    # ^ and ~ drop everything from the first wildcard onwards, so the endpoint
+    # is a wildcard line and its pre-release -- which had nowhere to bind in the
+    # text as written -- is discarded with it. node-semver validates the suffix
+    # either way, so "^x.1.8-a_b" is still reported rather than swallowed.
+    collapsed = _cut_at_wildcard(core) if collapse_wildcards else core
+    if collapsed != core:
+        components = collapsed.split(".") if collapsed else []
     # A pre-release binds to the patch component, so it needs the patch
     # component spelled out: "1.2.3-alpha" is a version and "1.2.x-alpha"
     # parses (the 'x' supplies the component the suffix attaches to), while
     # "1.2-alpha" and "1.x-alpha" have nowhere to put it and are rejected.
-    if pre and len(components) < 3:
+    if pre and len(components) < 3 and collapsed == core:
         raise _fail(raw, _RULE_ENDPOINT_PRE)
     # Validate both suffixes, even the ones about to be dropped, so that junk
     # such as "1.2.x-a_b" is reported instead of quietly swallowed.
@@ -326,7 +368,7 @@ def _split_endpoint(text: str, raw: str) -> _Endpoint:
             except InvalidVersion as error:
                 raise _as_range_error(raw, error) from error
     try:
-        partial = PartialVersion.parse(core)
+        partial = PartialVersion.parse(collapsed) if collapsed else PartialVersion(None)
     except InvalidVersion as error:
         raise _as_range_error(raw, error) from error
     # Both suffixes are ignored unless the patch is a number. A wildcard or
@@ -413,8 +455,10 @@ def _expand_caret(text: str, raw: str) -> Tuple[Comparator, ...]:
     ``>=1.2.0 <2.0.0-0``) but the next minor for a zero one (``^0.2`` is
     ``>=0.2.0 <0.3.0-0``). ``^0`` and ``^0.0`` constrain only the ceiling,
     because ``0.x`` is the initial-development line: ``^0`` is ``<1.0.0-0``.
+    A wildcard major collapses the whole endpoint to the bare wildcard, so
+    ``^x.1.8`` is ``^x``, which matches every version.
     """
-    endpoint = _split_endpoint(text, raw)
+    endpoint = _split_endpoint(text, raw, collapse_wildcards=True)
     partial = endpoint.partial
     if partial.major is None:
         return ()
@@ -443,9 +487,11 @@ def _expand_tilde(text: str, raw: str) -> Tuple[Comparator, ...]:
     With a minor given, only the patch may change, so ``~1.2.3`` is
     ``>=1.2.3 <1.3.0-0`` and ``~1.2`` is ``>=1.2.0 <1.3.0-0``. Without a minor
     the minor may change too, making ``~1`` equivalent to ``1``; ``~0`` is
-    the ceiling-only form used for the initial-development line.
+    the ceiling-only form used for the initial-development line. As with ``^``,
+    a wildcard major collapses the endpoint to the bare wildcard, so ``~x.1.8``
+    is ``~x``.
     """
-    endpoint = _split_endpoint(text, raw)
+    endpoint = _split_endpoint(text, raw, collapse_wildcards=True)
     partial = endpoint.partial
     if partial.major is None:
         return ()
